@@ -10,14 +10,13 @@ The system will manage products, carts, orders, invoices, stock status and admin
 
 - Admin
 - Customer
-
 ## 3. Main Features
 
 - User authentication
 - Role-based access
 - Product management
 - Product browsing
-- Shopping cart
+- Shopping cart& 
 - Order management
 - Invoice management
 - Stock status
