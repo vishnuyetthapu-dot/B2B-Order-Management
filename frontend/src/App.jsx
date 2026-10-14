@@ -1,907 +1,741 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = "http://localhost:5000/api";
+const API = "http://localhost:5000/api";
 
-function App() {
-  const [activePage, setActivePage] = useState("Dashboard");
+export default function App() {
+  const [page, setPage] = useState("Dashboard");
   const [products, setProducts] = useState([]);
-  const [cart, setCart] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [productName, setProductName] = useState("");
+  const [productPrice, setProductPrice] = useState("");
+  const [productStock, setProductStock] = useState("");
+  const [invoice, setInvoice] = useState(null);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // -----------------------------
-  // Fetch products from backend
-  // -----------------------------
+  async function request(path, options = {}) {
+    let response;
+
+    try {
+      response = await fetch(`${API}${path}`, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      });
+    } catch {
+      throw new Error(
+        "Backend connect avvaledu. Backend server port 5000 lo run avuthundo check cheyyi."
+      );
+    }
+
+    const text = await response.text();
+    let data = {};
+
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { message: text };
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data.message || data.error || `Request failed (${response.status})`
+      );
+    }
+
+    return data;
+  }
+
+  async function loadProducts() {
+    const data = await request("/products");
+    const list = Array.isArray(data) ? data : data.products;
+
+    if (!Array.isArray(list)) {
+      throw new Error("Products API nunchi valid list raledu.");
+    }
+
+    setProducts(list);
+  }
+
+  async function loadOrders() {
+    const data = await request("/orders");
+    const list = Array.isArray(data) ? data : data.orders;
+
+    if (!Array.isArray(list)) {
+      throw new Error("Orders API nunchi valid list raledu.");
+    }
+
+    setOrders(list);
+  }
+
+  async function refreshData() {
+    try {
+      await Promise.all([loadProducts(), loadOrders()]);
+      setMessage("");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
   useEffect(() => {
-    fetchProducts();
+    refreshData();
   }, []);
 
-  async function fetchProducts() {
+  async function addProduct(event) {
+    event.preventDefault();
+
     try {
-      setLoading(true);
-      setError("");
+      await request("/products", {
+        method: "POST",
+        body: JSON.stringify({
+          name: productName.trim(),
+          price: Number(productPrice),
+          stock: Number(productStock),
+        }),
+      });
 
-      const response = await fetch(`${API_URL}/products`);
+      setProductName("");
+      setProductPrice("");
+      setProductStock("");
+      setMessage("Product added successfully.");
+      await loadProducts();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch products");
-      }
+  async function deleteProduct(product) {
+    if (!window.confirm(`Delete ${product.name}?`)) return;
 
-      const data = await response.json();
+    try {
+      await request(`/products/${product.id}`, { method: "DELETE" });
+      setMessage("Product deleted successfully.");
+      await loadProducts();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
 
-      setProducts(data);
-    } catch (err) {
-      console.error(err);
-      setError("Unable to load products from backend.");
+  async function createOrder(event) {
+    event.preventDefault();
+
+    if (!customer.trim() || !selectedProduct || Number(quantity) < 1) {
+      setMessage("Customer, product and valid quantity enter cheyyi.");
+      return;
+    }
+
+    const product = products.find(
+      (item) => String(item.id) === String(selectedProduct)
+    );
+
+    if (!product) {
+      setMessage("Valid product select cheyyi.");
+      return;
+    }
+
+    if (Number(quantity) > Number(product.stock)) {
+      setMessage("Not enough stock available.");
+      return;
+    }
+
+    try {
+      await request("/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          customer_name: customer.trim(),
+          items: [
+            {
+              product_id: Number(selectedProduct),
+              quantity: Number(quantity),
+            },
+          ],
+        }),
+      });
+
+      setCustomer("");
+      setSelectedProduct("");
+      setQuantity(1);
+      setMessage("Order created successfully.");
+
+      await Promise.all([loadProducts(), loadOrders()]);
+      setPage("Orders");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function updateStatus(orderId, status) {
+    try {
+      await request(`/orders/${orderId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+
+      setMessage("Order status updated.");
+      await loadOrders();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function viewInvoice(order) {
+    setLoading(true);
+    setMessage("");
+    setInvoice(null);
+
+    try {
+      const data = await request(`/orders/${order.id}/invoice`);
+
+      const orderData = data.order || data;
+
+      setInvoice({
+        ...data,
+        order: orderData,
+        items: Array.isArray(data.items)
+          ? data.items
+          : Array.isArray(orderData.items)
+            ? orderData.items
+            : [],
+      });
+
+      setPage("Invoice");
+    } catch (error) {
+      setMessage(`Invoice load failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
   }
 
-  // -----------------------------
-  // Add product to cart
-  // -----------------------------
-  function addToCart(product) {
-    const existingProduct = cart.find(
-      (item) => item.id === product.id
-    );
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (character) => {
+      const entities = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
 
-    if (existingProduct) {
-      setCart(
-        cart.map((item) =>
-          item.id === product.id
-            ? {
-                ...item,
-                quantity: item.quantity + 1,
-              }
-            : item
-        )
-      );
-    } else {
-      setCart([
-        ...cart,
-        {
-          ...product,
-          quantity: 1,
-        },
-      ]);
-    }
+      return entities[character];
+    });
   }
 
-  // -----------------------------
-  // Remove product from cart
-  // -----------------------------
-  function removeFromCart(productId) {
-    setCart(
-      cart.filter((item) => item.id !== productId)
-    );
-  }
+  function printInvoice() {
+    if (!invoice) return;
 
-  // -----------------------------
-  // Change quantity
-  // -----------------------------
-  function changeQuantity(productId, change) {
-    setCart(
-      cart
-        .map((item) => {
-          if (item.id === productId) {
-            const newQuantity =
-              item.quantity + change;
+    const order = invoice.order || invoice;
+    const items = invoice.items || [];
 
-            return {
-              ...item,
-              quantity:
-                newQuantity < 1
-                  ? 1
-                  : newQuantity,
-            };
-          }
+    const rows = items
+      .map((item) => {
+        const price = Number(item.price || 0);
+        const qty = Number(item.quantity || 0);
+        const subtotal = Number(item.subtotal ?? price * qty);
 
-          return item;
-        })
-    );
-  }
+        return `
+          <tr>
+            <td>${escapeHtml(item.product_name || item.name || "Product")}</td>
+            <td>${qty}</td>
+            <td>₹${price.toLocaleString("en-IN")}</td>
+            <td>₹${subtotal.toLocaleString("en-IN")}</td>
+          </tr>`;
+      })
+      .join("");
 
-  // -----------------------------
-  // Cart total
-  // -----------------------------
-  const cartTotal = useMemo(() => {
-    return cart.reduce(
-      (total, item) =>
-        total +
-        Number(item.price) * item.quantity,
-      0
-    );
-  }, [cart]);
+    const printWindow = window.open("", "_blank");
 
-  // -----------------------------
-  // Cart item count
-  // -----------------------------
-  const cartItemCount = useMemo(() => {
-    return cart.reduce(
-      (total, item) =>
-        total + item.quantity,
-      0
-    );
-  }, [cart]);
-
-  // -----------------------------
-  // Place order
-  // -----------------------------
-  function placeOrder() {
-    if (cart.length === 0) {
-      alert("Your cart is empty.");
+    if (!printWindow) {
+      setMessage("Browser settings lo pop-ups allow cheyyi.");
       return;
     }
 
-    const newOrder = {
-      id: orders.length + 1,
-      date: new Date().toLocaleDateString(),
-      items: [...cart],
-      total: cartTotal,
-      status: "Placed",
-    };
-
-    const newInvoice = {
-      id: invoices.length + 1,
-      orderId: newOrder.id,
-      date: newOrder.date,
-      amount: cartTotal,
-      status: "Generated",
-    };
-
-    setOrders([
-      ...orders,
-      newOrder,
-    ]);
-
-    setInvoices([
-      ...invoices,
-      newInvoice,
-    ]);
-
-    setCart([]);
-
-    setActivePage("Orders");
-
-    alert("Order placed successfully!");
-  }
-
-  // -----------------------------
-  // Dashboard
-  // -----------------------------
-  function Dashboard() {
-    const totalStock = products.reduce(
-      (total, product) =>
-        total + Number(product.stock || 0),
-      0
-    );
-
-    return (
-      <div>
-        <PageHeader
-          title="Dashboard"
-          description="B2B Order Management overview"
-        />
-
-        <div className="cards">
-          <div className="card">
-            <h3>Total Products</h3>
-            <p>{products.length}</p>
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Invoice #${escapeHtml(order.id)}</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            max-width: 850px;
+            margin: 35px auto;
+            padding: 25px;
+            color: #1e293b;
+          }
+          .top {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 3px solid #1769d2;
+            padding-bottom: 20px;
+          }
+          h1 { color: #1769d2; margin-bottom: 5px; }
+          .details { line-height: 2; margin: 25px 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #dbe2ea; padding: 12px; text-align: left; }
+          th { background: #eff6ff; }
+          .total { text-align: right; margin-top: 25px; font-size: 22px; }
+          .footer { margin-top: 40px; color: #64748b; }
+          @media print { body { margin: 0; } }
+        </style>
+      </head>
+      <body>
+        <div class="top">
+          <div>
+            <h1>B2B Portal</h1>
+            <p>Order Management</p>
           </div>
-
-          <div className="card">
-            <h3>Cart Items</h3>
-            <p>{cartItemCount}</p>
-          </div>
-
-          <div className="card">
-            <h3>Total Stock</h3>
-            <p>{totalStock}</p>
-          </div>
-
-          <div className="card">
-            <h3>Total Orders</h3>
-            <p>{orders.length}</p>
+          <div>
+            <h2>INVOICE</h2>
+            <p>Invoice #${escapeHtml(order.id)}</p>
           </div>
         </div>
 
-        <div className="section">
-          <h2>System Status</h2>
-
-          <div className="status-box">
-            <span className="status-dot"></span>
-            Backend API connected
-          </div>
-
-          <p className="muted">
-            Product data is being loaded from the
-            Node.js backend API.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Products
-  // -----------------------------
-  function Products() {
-    return (
-      <div>
-        <PageHeader
-          title="Products"
-          description="Browse available products and add them to cart"
-        />
-
-        {loading && (
-          <div className="message">
-            Loading products...
-          </div>
-        )}
-
-        {error && (
-          <div className="error">
-            {error}
-          </div>
-        )}
-
-        {!loading &&
-          !error &&
-          products.length === 0 && (
-            <div className="message">
-              No products available.
-            </div>
-          )}
-
-        {!loading &&
-          !error &&
-          products.length > 0 && (
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Product</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {products.map((product) => (
-                    <tr key={product.id}>
-                      <td>{product.id}</td>
-
-                      <td>
-                        <strong>
-                          {product.name}
-                        </strong>
-                      </td>
-
-                      <td>
-                        ₹
-                        {Number(
-                          product.price
-                        ).toLocaleString("en-IN")}
-                      </td>
-
-                      <td>
-                        <span
-                          className={
-                            Number(product.stock) > 0
-                              ? "stock available"
-                              : "stock out"
-                          }
-                        >
-                          {product.stock}
-                        </span>
-                      </td>
-
-                      <td>
-                        <button
-                          className="primary-btn"
-                          disabled={
-                            Number(product.stock) <= 0
-                          }
-                          onClick={() =>
-                            addToCart(product)
-                          }
-                        >
-                          Add to Cart
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Shopping Cart
-  // -----------------------------
-  function ShoppingCart() {
-    return (
-      <div>
-        <PageHeader
-          title="Shopping Cart"
-          description="Review products before placing an order"
-        />
-
-        {cart.length === 0 ? (
-          <div className="empty-box">
-            <h3>Your cart is empty</h3>
-            <p>
-              Go to Products and add products
-              to your cart.
-            </p>
-
-            <button
-              className="primary-btn"
-              onClick={() =>
-                setActivePage("Products")
-              }
-            >
-              Browse Products
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Price</th>
-                    <th>Quantity</th>
-                    <th>Subtotal</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {cart.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.name}</td>
-
-                      <td>
-                        ₹
-                        {Number(
-                          item.price
-                        ).toLocaleString("en-IN")}
-                      </td>
-
-                      <td>
-                        <div className="quantity">
-                          <button
-                            onClick={() =>
-                              changeQuantity(
-                                item.id,
-                                -1
-                              )
-                            }
-                          >
-                            -
-                          </button>
-
-                          <span>
-                            {item.quantity}
-                          </span>
-
-                          <button
-                            onClick={() =>
-                              changeQuantity(
-                                item.id,
-                                1
-                              )
-                            }
-                          >
-                            +
-                          </button>
-                        </div>
-                      </td>
-
-                      <td>
-                        ₹
-                        {(
-                          Number(item.price) *
-                          item.quantity
-                        ).toLocaleString("en-IN")}
-                      </td>
-
-                      <td>
-                        <button
-                          className="danger-btn"
-                          onClick={() =>
-                            removeFromCart(
-                              item.id
-                            )
-                          }
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="total-box">
-              <h2>
-                Total: ₹
-                {cartTotal.toLocaleString("en-IN")}
-              </h2>
-
-              <button
-                className="primary-btn large"
-                onClick={placeOrder}
-              >
-                Place Order
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Orders
-  // -----------------------------
-  function Orders() {
-    return (
-      <div>
-        <PageHeader
-          title="Orders"
-          description="View placed customer orders"
-        />
-
-        {orders.length === 0 ? (
-          <div className="empty-box">
-            <h3>No orders yet</h3>
-            <p>
-              Orders will appear here after
-              checkout.
-            </p>
-          </div>
-        ) : (
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Order ID</th>
-                  <th>Date</th>
-                  <th>Items</th>
-                  <th>Total</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
-                    <td>#{order.id}</td>
-
-                    <td>{order.date}</td>
-
-                    <td>
-                      {order.items.length}
-                    </td>
-
-                    <td>
-                      ₹
-                      {order.total.toLocaleString(
-                        "en-IN"
-                      )}
-                    </td>
-
-                    <td>
-                      <span className="badge success">
-                        {order.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Invoices
-  // -----------------------------
-  function Invoices() {
-    return (
-      <div>
-        <PageHeader
-          title="Invoices"
-          description="Generated invoices for orders"
-        />
-
-        {invoices.length === 0 ? (
-          <div className="empty-box">
-            <h3>No invoices available</h3>
-            <p>
-              An invoice will be generated when
-              an order is placed.
-            </p>
-          </div>
-        ) : (
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Invoice ID</th>
-                  <th>Order ID</th>
-                  <th>Date</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {invoices.map((invoice) => (
-                  <tr key={invoice.id}>
-                    <td>
-                      INV-{invoice.id}
-                    </td>
-
-                    <td>
-                      #{invoice.orderId}
-                    </td>
-
-                    <td>
-                      {invoice.date}
-                    </td>
-
-                    <td>
-                      ₹
-                      {invoice.amount.toLocaleString(
-                        "en-IN"
-                      )}
-                    </td>
-
-                    <td>
-                      <span className="badge success">
-                        {invoice.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Stock Status
-  // -----------------------------
-  function StockStatus() {
-    return (
-      <div>
-        <PageHeader
-          title="Stock Status"
-          description="Current inventory status"
-        />
-
-        <div className="stock-grid">
-          {products.map((product) => {
-            const stock =
-              Number(product.stock) || 0;
-
-            let status = "In Stock";
-
-            if (stock === 0) {
-              status = "Out of Stock";
-            } else if (stock < 10) {
-              status = "Low Stock";
-            }
-
-            return (
-              <div
-                className="stock-card"
-                key={product.id}
-              >
-                <h3>{product.name}</h3>
-
-                <p>
-                  Available Units:
-                  <strong>
-                    {" "}
-                    {stock}
-                  </strong>
-                </p>
-
-                <span
-                  className={
-                    stock === 0
-                      ? "badge danger"
-                      : stock < 10
-                      ? "badge warning"
-                      : "badge success"
-                  }
-                >
-                  {status}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Admin Controls
-  // -----------------------------
-  function AdminControls() {
-    return (
-      <div>
-        <PageHeader
-          title="Admin Controls"
-          description="Administrative controls for the platform"
-        />
-
-        <div className="admin-grid">
-          <div className="admin-card">
-            <h3>User Management</h3>
-            <p>
-              Manage administrators and
-              customer access.
-            </p>
-
-            <button className="secondary-btn">
-              Manage Users
-            </button>
-          </div>
-
-          <div className="admin-card">
-            <h3>Product Management</h3>
-            <p>
-              View and manage products and
-              inventory.
-            </p>
-
-            <button
-              className="secondary-btn"
-              onClick={() =>
-                setActivePage("Products")
-              }
-            >
-              Manage Products
-            </button>
-          </div>
-
-          <div className="admin-card">
-            <h3>Order Management</h3>
-            <p>
-              Review customer orders and
-              order status.
-            </p>
-
-            <button
-              className="secondary-btn"
-              onClick={() =>
-                setActivePage("Orders")
-              }
-            >
-              View Orders
-            </button>
-          </div>
-
-          <div className="admin-card">
-            <h3>System Information</h3>
-            <p>
-              Backend: Node.js
-            </p>
-            <p>
-              Database: PostgreSQL
-            </p>
-            <p>
-              Frontend: React
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // -----------------------------
-  // Page Header
-  // -----------------------------
-  function PageHeader({
-    title,
-    description,
-  }) {
-    return (
-      <div className="page-header">
-        <div>
-          <h1>{title}</h1>
-          <p>{description}</p>
+        <div class="details">
+          <b>Customer:</b> ${escapeHtml(order.customer_name || order.customer || "—")}<br>
+          <b>Date:</b> ${escapeHtml(order.created_at || "—")}<br>
+          <b>Status:</b> ${escapeHtml(order.status || "Pending")}
         </div>
 
-        <div className="user-info">
-          <span>Admin</span>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || "<tr><td colspan='4'>Item details unavailable</td></tr>"}
+          </tbody>
+        </table>
 
-          <button
-            className="logout-btn"
-            onClick={() =>
-              alert("Logout functionality")
-            }
-          >
-            Logout
-          </button>
-        </div>
-      </div>
-    );
+        <h2 class="total">
+          Total: ₹${Number(
+            order.total_amount || invoice.total_amount || 0
+          ).toLocaleString("en-IN")}
+        </h2>
+
+        <p class="footer">Thank you for your business.</p>
+        <script>window.onload = function () { window.print(); }<\/script>
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
   }
 
-  // -----------------------------
-  // Page Renderer
-  // -----------------------------
-  function renderPage() {
-    switch (activePage) {
-      case "Dashboard":
-        return <Dashboard />;
+  const totalSales = orders.reduce(
+    (sum, order) => sum + Number(order.total_amount || 0),
+    0
+  );
 
-      case "Products":
-        return <Products />;
+  const menu = ["Dashboard", "Products", "Create Order", "Orders"];
 
-      case "Shopping Cart":
-        return <ShoppingCart />;
-
-      case "Orders":
-        return <Orders />;
-
-      case "Invoices":
-        return <Invoices />;
-
-      case "Stock Status":
-        return <StockStatus />;
-
-      case "Admin Controls":
-        return <AdminControls />;
-
-      default:
-        return <Dashboard />;
-    }
-  }
-
-  // -----------------------------
-  // Main UI
-  // -----------------------------
   return (
-    <div className="app">
+    <div className="app-layout">
       <aside className="sidebar">
-        <div className="logo">
-          <h2>B2B Order</h2>
-          <h2>Management</h2>
+        <div className="brand">
+          <div className="brand-logo">B</div>
+          <div>
+            <h3>B2B Portal</h3>
+            <span>Order Management</span>
+          </div>
         </div>
 
-        <nav>
-          <button
-            className={
-              activePage === "Dashboard"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Dashboard")
-            }
-          >
-            Dashboard
-          </button>
+        <p className="menu-heading">MAIN MENU</p>
 
+        {menu.map((item) => (
           <button
-            className={
-              activePage === "Products"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Products")
-            }
+            key={item}
+            className={`menu-item ${page === item ? "active" : ""}`}
+            onClick={() => setPage(item)}
           >
-            Products
+            {item === "Dashboard" && "▦"}
+            {item === "Products" && "□"}
+            {item === "Create Order" && "+"}
+            {item === "Orders" && "☷"}
+            <span>{item}</span>
           </button>
+        ))}
 
-          <button
-            className={
-              activePage === "Shopping Cart"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Shopping Cart")
-            }
-          >
-            Shopping Cart
-            {cartItemCount > 0 && (
-              <span className="nav-count">
-                {cartItemCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            className={
-              activePage === "Orders"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Orders")
-            }
-          >
-            Orders
-          </button>
-
-          <button
-            className={
-              activePage === "Invoices"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Invoices")
-            }
-          >
-            Invoices
-          </button>
-
-          <button
-            className={
-              activePage === "Stock Status"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Stock Status")
-            }
-          >
-            Stock Status
-          </button>
-
-          <button
-            className={
-              activePage === "Admin Controls"
-                ? "nav-btn active"
-                : "nav-btn"
-            }
-            onClick={() =>
-              setActivePage("Admin Controls")
-            }
-          >
-            Admin Controls
-          </button>
-        </nav>
-
-        <div className="sidebar-footer">
-          <p>B2B Order Management</p>
-          <small>Full Stack Project</small>
+        <div className="sidebar-bottom">
+          <strong>Administrator</strong>
+          <span>Admin Account</span>
         </div>
       </aside>
 
       <main className="main-content">
-        {renderPage()}
+        <header className="page-header">
+          <div>
+            <h1>{page}</h1>
+            <p>Manage your products, inventory and orders.</p>
+          </div>
+          <button className="secondary-btn" onClick={refreshData}>
+            ↻ Refresh
+          </button>
+        </header>
+
+        {message && (
+          <div className="message" role="alert">
+            <span>{message}</span>
+            <button onClick={() => setMessage("")} aria-label="Close message">
+              ×
+            </button>
+          </div>
+        )}
+
+        {page === "Dashboard" && (
+          <>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <span>Total Products</span>
+                <h2>{products.length}</h2>
+              </div>
+              <div className="stat-card">
+                <span>Total Orders</span>
+                <h2>{orders.length}</h2>
+              </div>
+              <div className="stat-card">
+                <span>Total Sales</span>
+                <h2>₹{totalSales.toLocaleString("en-IN")}</h2>
+              </div>
+              <div className="stat-card">
+                <span>Pending Orders</span>
+                <h2>
+                  {orders.filter((order) => order.status === "Pending").length}
+                </h2>
+              </div>
+            </div>
+
+            <section className="panel">
+              <h2>Recent Orders</h2>
+              <OrdersTable
+                orders={orders.slice(0, 5)}
+                onStatusChange={updateStatus}
+                onViewInvoice={viewInvoice}
+              />
+            </section>
+          </>
+        )}
+
+        {page === "Products" && (
+          <>
+            <section className="panel">
+              <h2>Add Product</h2>
+              <form className="form-grid" onSubmit={addProduct}>
+                <label>
+                  Product Name
+                  <input
+                    value={productName}
+                    onChange={(event) => setProductName(event.target.value)}
+                    required
+                    placeholder="Enter product name"
+                  />
+                </label>
+
+                <label>
+                  Price
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={productPrice}
+                    onChange={(event) => setProductPrice(event.target.value)}
+                    required
+                  />
+                </label>
+
+                <label>
+                  Stock
+                  <input
+                    type="number"
+                    min="0"
+                    value={productStock}
+                    onChange={(event) => setProductStock(event.target.value)}
+                    required
+                  />
+                </label>
+
+                <button className="primary-btn" type="submit">
+                  Add Product
+                </button>
+              </form>
+            </section>
+
+            <section className="panel">
+              <h2>All Products ({products.length})</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Product Name</th>
+                      <th>Price</th>
+                      <th>Stock</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.map((product) => (
+                      <tr key={product.id}>
+                        <td>#{product.id}</td>
+                        <td>{product.name}</td>
+                        <td>
+                          ₹{Number(product.price || 0).toLocaleString("en-IN")}
+                        </td>
+                        <td>{product.stock}</td>
+                        <td>
+                          <button
+                            className="delete-btn"
+                            onClick={() => deleteProduct(product)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {products.length === 0 && (
+                      <tr>
+                        <td colSpan="5">No products found</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+
+        {page === "Create Order" && (
+          <section className="panel">
+            <h2>Create New Order</h2>
+            <form className="order-form" onSubmit={createOrder}>
+              <label>
+                Customer Name
+                <input
+                  value={customer}
+                  onChange={(event) => setCustomer(event.target.value)}
+                  required
+                  placeholder="Enter customer name"
+                />
+              </label>
+
+              <label>
+                Select Product
+                <select
+                  value={selectedProduct}
+                  onChange={(event) => setSelectedProduct(event.target.value)}
+                  required
+                >
+                  <option value="">Choose a product</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} — ₹{product.price} (Stock: {product.stock})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Quantity
+                <input
+                  type="number"
+                  min="1"
+                  value={quantity}
+                  onChange={(event) => setQuantity(event.target.value)}
+                  required
+                />
+              </label>
+
+              <button className="primary-btn" type="submit">
+                Create Order
+              </button>
+            </form>
+          </section>
+        )}
+
+        {page === "Orders" && (
+          <section className="panel">
+            <h2>All Orders</h2>
+            <p>View orders, invoices and update their status.</p>
+            <OrdersTable
+              orders={orders}
+              onStatusChange={updateStatus}
+              onViewInvoice={viewInvoice}
+            />
+          </section>
+        )}
+
+        {page === "Invoice" && invoice && (
+          <section className="panel invoice-panel">
+            <div className="invoice-header">
+              <div>
+                <h2>Invoice #{invoice.order.id}</h2>
+                <p>B2B Portal — Order Management</p>
+              </div>
+              <button className="primary-btn" onClick={printInvoice}>
+                Print Invoice
+              </button>
+            </div>
+
+            <div className="invoice-details">
+              <p>
+                <strong>Customer:</strong>{" "}
+                {invoice.order.customer_name || invoice.order.customer || "—"}
+              </p>
+              <p>
+                <strong>Date:</strong>{" "}
+                {invoice.order.created_at
+                  ? new Date(invoice.order.created_at).toLocaleString()
+                  : "—"}
+              </p>
+              <p>
+                <strong>Status:</strong> {invoice.order.status || "Pending"}
+              </p>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoice.items.map((item, index) => (
+                    <tr key={item.id || index}>
+                      <td>{item.product_name || item.name || "Product"}</td>
+                      <td>{item.quantity || 0}</td>
+                      <td>
+                        ₹{Number(item.price || 0).toLocaleString("en-IN")}
+                      </td>
+                      <td>
+                        ₹
+                        {Number(
+                          item.subtotal ??
+                            Number(item.price || 0) * Number(item.quantity || 0)
+                        ).toLocaleString("en-IN")}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {invoice.items.length === 0 && (
+                    <tr>
+                      <td colSpan="4">No item details available for this order.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <h2 className="invoice-total">
+              Total: ₹
+              {Number(
+                invoice.order.total_amount || invoice.total_amount || 0
+              ).toLocaleString("en-IN")}
+            </h2>
+
+            <button className="secondary-btn" onClick={() => setPage("Orders")}>
+              Back to Orders
+            </button>
+          </section>
+        )}
+
+        {loading && <p>Loading invoice...</p>}
       </main>
     </div>
   );
 }
 
-export default App;
+function OrdersTable({ orders, onStatusChange, onViewInvoice }) {
+  const statuses = [
+    "Pending",
+    "Processing",
+    "Shipped",
+    "Delivered",
+    "Completed",
+    "Cancelled",
+  ];
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Customer</th>
+            <th>Total Amount</th>
+            <th>Created At</th>
+            <th>Status</th>
+            <th>Update Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order) => (
+            <tr key={order.id}>
+              <td>#{order.id}</td>
+              <td>{order.customer_name || order.customer || "—"}</td>
+              <td>
+                ₹{Number(order.total_amount || 0).toLocaleString("en-IN")}
+              </td>
+              <td>
+                {order.created_at
+                  ? new Date(order.created_at).toLocaleString()
+                  : "—"}
+              </td>
+              <td>
+                <span
+                  className={`status-badge ${String(
+                    order.status || "Pending"
+                  ).toLowerCase()}`}
+                >
+                  {order.status || "Pending"}
+                </span>
+              </td>
+              <td>
+                <select
+                  value={order.status || "Pending"}
+                  onChange={(event) =>
+                    onStatusChange(order.id, event.target.value)
+                  }
+                >
+                  {statuses.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <button
+                  className="primary-btn"
+                  onClick={() => onViewInvoice(order)}
+                >
+                  View Invoice
+                </button>
+              </td>
+            </tr>
+          ))}
+
+          {orders.length === 0 && (
+            <tr>
+              <td colSpan="7">No orders found</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
