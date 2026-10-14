@@ -13,10 +13,6 @@ Technology Stack
 - Development Tools: Visual Studio Code, Git, GitHub
 
 Features Implemented
-## Screenshots
-
-### Dashboard
-![B2B Order Management Dashboard](docs/Screenshots/dashboard.png)
 - View product listings and product details
 - Add and manage products
 - Store product and order data in PostgreSQL
@@ -27,7 +23,19 @@ Features Implemented
 - View order details and invoices
 - Print invoices
 - Dashboard with product, order, and sales information
+## Screenshots
 
+### Dashboard
+![Dashboard](docs/Screenshots/dashboard.png)
+
+### Products
+![Products](docs/Screenshots/Products.png)
+
+### Create Order
+![Create Order](docs/Screenshots/create-order.png)
+
+### Orders
+![Orders](docs/Screenshots/Orders.png)
 Project Structure
 
 - "frontend/" — React frontend application
