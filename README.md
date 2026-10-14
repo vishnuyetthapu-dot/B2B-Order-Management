@@ -13,7 +13,10 @@ Technology Stack
 - Development Tools: Visual Studio Code, Git, GitHub
 
 Features Implemented
+## Screenshots
 
+### Dashboard
+![B2B Order Management Dashboard](docs/Screenshots/dashboard.png)
 - View product listings and product details
 - Add and manage products
 - Store product and order data in PostgreSQL
